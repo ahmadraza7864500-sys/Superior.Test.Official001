@@ -5,7 +5,7 @@ import { useApp } from '../context';
 import * as api from '../api';
 import { DashboardLayout, StatCard, EmptyState, Card, Modal } from '../components';
 import { LayoutDashboard, Users, UserCheck, BookOpen, FileText, BarChart3, Bell, ClipboardList, Plus, Trash2, ToggleLeft, ToggleRight, Download } from 'lucide-react';
-import { formatDateTime, formatDate, exportToCSV } from '../utils';
+import { formatDateTime, formatDate, exportToCSV, exportToExcel, exportToPDF } from '../utils';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 
 export default function PrincipalDashboard() {
@@ -31,11 +31,17 @@ export default function PrincipalDashboard() {
   const [showAddSection, setShowAddSection] = useState(false);
   const [showAddSubject, setShowAddSubject] = useState(false);
   const [showAssignTeacher, setShowAssignTeacher] = useState(false);
+  const [showEditStudent, setShowEditStudent] = useState(false);
+  const [showResetPassword, setShowResetPassword] = useState(false);
+  const [editingStudent, setEditingStudent] = useState<any>(null);
+  const [resetPasswordTeacher, setResetPasswordTeacher] = useState<any>(null);
   const [teacherForm, setTeacherForm] = useState({ full_name: '', email: '', username: '', password: '', phone: '' });
   const [classForm, setClassForm] = useState({ name: '', academic_year: new Date().getFullYear().toString() });
   const [sectionForm, setSectionForm] = useState({ class_id: '', name: '' });
   const [subjectForm, setSubjectForm] = useState({ name: '', category: '' });
   const [assignForm, setAssignForm] = useState({ teacher_id: '', class_id: '', section_id: '', subject_id: '' });
+  const [editStudentForm, setEditStudentForm] = useState({ full_name: '', email: '', phone: '', father_name: '', class_id: '', section_id: '', roll_number: '' });
+  const [newPassword, setNewPassword] = useState('');
 
   useEffect(() => { loadData(); }, []);
 
@@ -83,6 +89,49 @@ export default function PrincipalDashboard() {
     loadData();
   };
 
+  const handleEditStudent = async () => {
+    if (!editingStudent) return;
+    setError('');
+    if (!editStudentForm.full_name || !editStudentForm.email) {
+      setError('Name and email are required.');
+      return;
+    }
+    await api.editStudent(editingStudent.id, editStudentForm);
+    await api.addAuditLog(user!.id, user!.full_name, 'principal', 'Edit Student', `Student: ${editStudentForm.full_name}`);
+    setShowEditStudent(false);
+    setEditingStudent(null);
+    loadData();
+  };
+
+  const handleResetPassword = async () => {
+    if (!resetPasswordTeacher || !newPassword) return;
+    setError('');
+    if (newPassword.length < 8) {
+      setError('Password must be at least 8 characters.');
+      return;
+    }
+    await api.resetTeacherPassword(resetPasswordTeacher.id, newPassword);
+    await api.addAuditLog(user!.id, user!.full_name, 'principal', 'Reset Teacher Password', `Teacher: ${resetPasswordTeacher.full_name}`);
+    setShowResetPassword(false);
+    setResetPasswordTeacher(null);
+    setNewPassword('');
+    alert('Password reset successfully. The teacher should change it on next login.');
+  };
+
+  const openEditStudent = (student: any) => {
+    setEditingStudent(student);
+    setEditStudentForm({
+      full_name: student.full_name || '',
+      email: student.email || '',
+      phone: student.phone || '',
+      father_name: student.father_name || '',
+      class_id: student.class_id || '',
+      section_id: student.section_id || '',
+      roll_number: student.roll_number || ''
+    });
+    setShowEditStudent(true);
+  };
+
   const handleAddClass = async () => {
     if (!classForm.name) { setError('Class name required.'); return; }
     await api.createClass(classForm.name, classForm.academic_year);
@@ -115,12 +164,23 @@ export default function PrincipalDashboard() {
     loadData();
   };
 
-  const handleExportReport = (type: string) => {
+  const handleExportReport = async (type: string, format: 'csv' | 'excel' | 'pdf' = 'csv') => {
     let data: any[] = [];
     if (type === 'students') data = students.map((s: any) => ({ Name: s.full_name, Email: s.email, Class: getClassName(s.class_id), Section: getSectionName(s.section_id), Roll: s.roll_number, Status: s.is_active ? 'Active' : 'Inactive' }));
     else if (type === 'tests') data = tests.map((t: any) => ({ Title: t.title, Subject: getSubjectName(t.subject_id), Class: getClassName(t.class_id), Status: t.status, Start: formatDateTime(t.start_time) }));
     else if (type === 'results') data = attempts.filter((a: any) => a.status === 'submitted').map((a: any) => { const test = tests.find((t: any) => t.id === a.test_id); const student = students.find((s: any) => s.id === a.student_id); return { Student: student?.full_name || '', Test: test?.title || '', Score: `${a.obtained_marks}/${a.total_marks}`, Percentage: a.percentage, Date: formatDate(a.submitted_at || '') }; });
-    exportToCSV(data, `${type}_report_${Date.now()}`);
+    
+    const filename = `${type}_report_${Date.now()}`;
+    
+    if (format === 'csv') {
+      exportToCSV(data, filename);
+    } else if (format === 'excel') {
+      await exportToExcel(data, filename);
+    } else if (format === 'pdf') {
+      const columns = Object.keys(data[0] || {});
+      const rows = data.map(row => columns.map(col => String(row[col] || '')));
+      await exportToPDF(`${type.charAt(0).toUpperCase() + type.slice(1)} Report`, columns, rows, filename);
+    }
   };
 
   const filteredStudents = students.filter((s: any) => {
@@ -183,7 +243,7 @@ export default function PrincipalDashboard() {
         </div>
       </div>
       {filteredStudents.length === 0 ? <EmptyState icon={Users} title="No students" description="No students registered yet." /> : (
-        <Card className="overflow-hidden"><div className="overflow-x-auto"><table className="w-full text-sm"><thead className="bg-theme-tertiary"><tr><th className="px-4 py-3 text-left font-medium text-theme-muted">Name</th><th className="px-4 py-3 text-left font-medium text-theme-muted">Email</th><th className="px-4 py-3 text-left font-medium text-theme-muted">Class</th><th className="px-4 py-3 text-left font-medium text-theme-muted">Roll</th><th className="px-4 py-3 text-left font-medium text-theme-muted">Status</th><th className="px-4 py-3 text-left font-medium text-theme-muted">Actions</th></tr></thead><tbody>{filteredStudents.slice(0, 50).map((s: any) => <tr key={s.id} className="border-b border-theme-card hover:bg-theme-tertiary"><td className="px-4 py-3 font-medium text-theme-primary">{s.full_name}</td><td className="px-4 py-3 text-theme-secondary">{s.email}</td><td className="px-4 py-3 text-theme-secondary">{getClassName(s.class_id)}</td><td className="px-4 py-3 text-theme-secondary">{s.roll_number}</td><td className="px-4 py-3"><span className={`px-2 py-0.5 text-xs rounded-full ${s.is_active ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{s.is_active ? 'Active' : 'Inactive'}</span></td><td className="px-4 py-3"><button onClick={() => handleDeleteStudent(s.id)} className="text-red-500 hover:text-red-700 text-xs">Deactivate</button></td></tr>)}</tbody></table></div></Card>
+        <Card className="overflow-hidden"><div className="overflow-x-auto"><table className="w-full text-sm"><thead className="bg-theme-tertiary"><tr><th className="px-4 py-3 text-left font-medium text-theme-muted">Name</th><th className="px-4 py-3 text-left font-medium text-theme-muted">Email</th><th className="px-4 py-3 text-left font-medium text-theme-muted">Class</th><th className="px-4 py-3 text-left font-medium text-theme-muted">Roll</th><th className="px-4 py-3 text-left font-medium text-theme-muted">Status</th><th className="px-4 py-3 text-left font-medium text-theme-muted">Actions</th></tr></thead><tbody>{filteredStudents.slice(0, 50).map((s: any) => <tr key={s.id} className="border-b border-theme-card hover:bg-theme-tertiary"><td className="px-4 py-3 font-medium text-theme-primary">{s.full_name}</td><td className="px-4 py-3 text-theme-secondary">{s.email}</td><td className="px-4 py-3 text-theme-secondary">{getClassName(s.class_id)}</td><td className="px-4 py-3 text-theme-secondary">{s.roll_number}</td><td className="px-4 py-3"><span className={`px-2 py-0.5 text-xs rounded-full ${s.is_active ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{s.is_active ? 'Active' : 'Inactive'}</span></td><td className="px-4 py-3 flex gap-2"><button onClick={() => openEditStudent(s)} className="text-indigo-500 hover:text-indigo-700 text-xs">Edit</button><button onClick={() => handleDeleteStudent(s.id)} className="text-red-500 hover:text-red-700 text-xs">Deactivate</button></td></tr>)}</tbody></table></div></Card>
       )}
     </div>
   );
@@ -193,7 +253,7 @@ export default function PrincipalDashboard() {
       <div className="flex items-center justify-between mb-6"><h2 className="text-2xl font-bold text-theme-primary">Teachers ({teachers.length})</h2><div className="flex gap-2"><button onClick={() => setShowAssignTeacher(true)} className="px-3 py-1.5 bg-theme-tertiary text-theme-secondary rounded-lg text-sm hover:bg-theme-border">Assign</button><button onClick={() => setShowAddTeacher(true)} className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700 flex items-center gap-1"><Plus className="w-3 h-3" /> Add</button></div></div>
       {error && <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg text-red-700 dark:text-red-300 text-sm">{error}</div>}
       {teachers.length === 0 ? <EmptyState icon={UserCheck} title="No teachers" description="Add your first teacher." /> : (
-        <div className="space-y-3">{teachers.map((t: any) => { const tAssignments = assignments.filter((a: any) => a.teacher_id === t.id); return <Card key={t.id} className="p-4"><div className="flex items-center justify-between"><div><h4 className="font-medium text-theme-primary">{t.full_name}</h4><p className="text-sm text-theme-muted">{t.email} · @{t.username}</p>{tAssignments.length > 0 && <div className="mt-1 flex flex-wrap gap-1">{tAssignments.map((a: any) => <span key={a.id} className="text-xs bg-theme-tertiary text-theme-secondary px-2 py-0.5 rounded">{getClassName(a.class_id)}-{getSectionName(a.section_id)} ({getSubjectName(a.subject_id)})</span>)}</div>}</div><div className="flex items-center gap-2"><button onClick={() => handleToggleTeacher(t.id, t.is_active)} className={`p-1.5 rounded ${t.is_active ? 'text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20' : 'text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20'}`}>{t.is_active ? <ToggleRight className="w-5 h-5" /> : <ToggleLeft className="w-5 h-5" />}</button></div></div></Card>; })}</div>
+        <div className="space-y-3">{teachers.map((t: any) => { const tAssignments = assignments.filter((a: any) => a.teacher_id === t.id); return <Card key={t.id} className="p-4"><div className="flex items-center justify-between"><div><h4 className="font-medium text-theme-primary">{t.full_name}</h4><p className="text-sm text-theme-muted">{t.email} · @{t.username}</p>{tAssignments.length > 0 && <div className="mt-1 flex flex-wrap gap-1">{tAssignments.map((a: any) => <span key={a.id} className="text-xs bg-theme-tertiary text-theme-secondary px-2 py-0.5 rounded">{getClassName(a.class_id)}-{getSectionName(a.section_id)} ({getSubjectName(a.subject_id)})</span>)}</div>}</div><div className="flex items-center gap-2"><button onClick={() => { setResetPasswordTeacher(t); setShowResetPassword(true); }} className="px-2 py-1 text-xs bg-amber-100 text-amber-700 rounded hover:bg-amber-200">Reset Password</button><button onClick={() => handleToggleTeacher(t.id, t.is_active)} className={`p-1.5 rounded ${t.is_active ? 'text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20' : 'text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20'}`}>{t.is_active ? <ToggleRight className="w-5 h-5" /> : <ToggleLeft className="w-5 h-5" />}</button></div></div></Card>; })}</div>
       )}
       <Modal isOpen={showAddTeacher} onClose={() => { setShowAddTeacher(false); setError(''); }} title="Add Teacher">
         {error && <div className="mb-3 p-2 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded text-red-700 dark:text-red-300 text-sm">{error}</div>}
@@ -269,9 +329,36 @@ export default function PrincipalDashboard() {
     <div>
       <h2 className="text-2xl font-bold text-theme-primary mb-6">Reports</h2>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card className="p-6"><Users className="w-8 h-8 text-indigo-600 mb-3" /><h3 className="font-semibold text-theme-primary">Student Report</h3><p className="text-sm text-theme-muted mt-1 mb-4">All student records.</p><button onClick={() => handleExportReport('students')} className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700">Export CSV</button></Card>
-        <Card className="p-6"><FileText className="w-8 h-8 text-green-600 mb-3" /><h3 className="font-semibold text-theme-primary">Test Report</h3><p className="text-sm text-theme-muted mt-1 mb-4">All tests with details.</p><button onClick={() => handleExportReport('tests')} className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700">Export CSV</button></Card>
-        <Card className="p-6"><BarChart3 className="w-8 h-8 text-purple-600 mb-3" /><h3 className="font-semibold text-theme-primary">Results Report</h3><p className="text-sm text-theme-muted mt-1 mb-4">All test results.</p><button onClick={() => handleExportReport('results')} className="px-4 py-2 bg-purple-600 text-white rounded-lg text-sm hover:bg-purple-700">Export CSV</button></Card>
+        <Card className="p-6">
+          <Users className="w-8 h-8 text-indigo-600 mb-3" />
+          <h3 className="font-semibold text-theme-primary">Student Report</h3>
+          <p className="text-sm text-theme-muted mt-1 mb-4">All student records with class, section, and status.</p>
+          <div className="flex flex-wrap gap-2">
+            <button onClick={() => handleExportReport('students', 'csv')} className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs hover:bg-indigo-700">CSV</button>
+            <button onClick={() => handleExportReport('students', 'excel')} className="px-3 py-1.5 bg-green-600 text-white rounded-lg text-xs hover:bg-green-700">Excel</button>
+            <button onClick={() => handleExportReport('students', 'pdf')} className="px-3 py-1.5 bg-red-600 text-white rounded-lg text-xs hover:bg-red-700">PDF</button>
+          </div>
+        </Card>
+        <Card className="p-6">
+          <FileText className="w-8 h-8 text-green-600 mb-3" />
+          <h3 className="font-semibold text-theme-primary">Test Report</h3>
+          <p className="text-sm text-theme-muted mt-1 mb-4">All tests with subject, class, status, and schedule.</p>
+          <div className="flex flex-wrap gap-2">
+            <button onClick={() => handleExportReport('tests', 'csv')} className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs hover:bg-indigo-700">CSV</button>
+            <button onClick={() => handleExportReport('tests', 'excel')} className="px-3 py-1.5 bg-green-600 text-white rounded-lg text-xs hover:bg-green-700">Excel</button>
+            <button onClick={() => handleExportReport('tests', 'pdf')} className="px-3 py-1.5 bg-red-600 text-white rounded-lg text-xs hover:bg-red-700">PDF</button>
+          </div>
+        </Card>
+        <Card className="p-6">
+          <BarChart3 className="w-8 h-8 text-purple-600 mb-3" />
+          <h3 className="font-semibold text-theme-primary">Results Report</h3>
+          <p className="text-sm text-theme-muted mt-1 mb-4">All test results with scores, percentages, and dates.</p>
+          <div className="flex flex-wrap gap-2">
+            <button onClick={() => handleExportReport('results', 'csv')} className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs hover:bg-indigo-700">CSV</button>
+            <button onClick={() => handleExportReport('results', 'excel')} className="px-3 py-1.5 bg-green-600 text-white rounded-lg text-xs hover:bg-green-700">Excel</button>
+            <button onClick={() => handleExportReport('results', 'pdf')} className="px-3 py-1.5 bg-red-600 text-white rounded-lg text-xs hover:bg-red-700">PDF</button>
+          </div>
+        </Card>
       </div>
     </div>
   );
@@ -297,6 +384,48 @@ export default function PrincipalDashboard() {
       {activeTab === 'reports' && renderReports()}
       {activeTab === 'audit' && renderAudit()}
       {activeTab === 'notifications' && <div><h2 className="text-2xl font-bold text-theme-primary mb-6">Notifications</h2>{notifications.length === 0 ? <EmptyState icon={Bell} title="No notifications" description="" /> : <div className="space-y-3">{notifications.map((n: any) => <Card key={n.id} className="p-4"><h4 className="font-medium text-theme-primary">{n.title}</h4><p className="text-sm text-theme-secondary mt-1">{n.message}</p><p className="text-xs text-theme-muted mt-2">{formatDateTime(n.created_at)}</p></Card>)}</div>}</div>}
+      
+      {/* Edit Student Modal */}
+      <Modal isOpen={showEditStudent} onClose={() => { setShowEditStudent(false); setEditingStudent(null); setError(''); }} title="Edit Student">
+        {error && <div className="mb-3 p-2 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded text-red-700 dark:text-red-300 text-sm">{error}</div>}
+        <div className="space-y-3">
+          <input type="text" placeholder="Full Name *" value={editStudentForm.full_name} onChange={e => setEditStudentForm({...editStudentForm, full_name: e.target.value})} className="w-full px-3 py-2 border border-theme rounded-lg text-sm" />
+          <input type="email" placeholder="Email *" value={editStudentForm.email} onChange={e => setEditStudentForm({...editStudentForm, email: e.target.value})} className="w-full px-3 py-2 border border-theme rounded-lg text-sm" />
+          <input type="text" placeholder="Phone" value={editStudentForm.phone} onChange={e => setEditStudentForm({...editStudentForm, phone: e.target.value})} className="w-full px-3 py-2 border border-theme rounded-lg text-sm" />
+          <input type="text" placeholder="Father's Name" value={editStudentForm.father_name} onChange={e => setEditStudentForm({...editStudentForm, father_name: e.target.value})} className="w-full px-3 py-2 border border-theme rounded-lg text-sm" />
+          <select value={editStudentForm.class_id} onChange={e => setEditStudentForm({...editStudentForm, class_id: e.target.value})} className="w-full px-3 py-2 border border-theme rounded-lg text-sm">
+            <option value="">Select Class</option>
+            {classes.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+          <select value={editStudentForm.section_id} onChange={e => setEditStudentForm({...editStudentForm, section_id: e.target.value})} className="w-full px-3 py-2 border border-theme rounded-lg text-sm">
+            <option value="">Select Section</option>
+            {sections.filter((s: any) => !editStudentForm.class_id || s.class_id === editStudentForm.class_id).map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+          <input type="text" placeholder="Roll Number" value={editStudentForm.roll_number} onChange={e => setEditStudentForm({...editStudentForm, roll_number: e.target.value})} className="w-full px-3 py-2 border border-theme rounded-lg text-sm" />
+        </div>
+        <div className="flex gap-3 mt-4">
+          <button onClick={() => { setShowEditStudent(false); setEditingStudent(null); setError(''); }} className="flex-1 py-2 bg-theme-tertiary text-theme-secondary rounded-lg text-sm">Cancel</button>
+          <button onClick={handleEditStudent} className="flex-1 py-2 bg-indigo-600 text-white rounded-lg text-sm">Save Changes</button>
+        </div>
+      </Modal>
+
+      {/* Reset Password Modal */}
+      <Modal isOpen={showResetPassword} onClose={() => { setShowResetPassword(false); setResetPasswordTeacher(null); setNewPassword(''); setError(''); }} title="Reset Teacher Password">
+        {error && <div className="mb-3 p-2 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded text-red-700 dark:text-red-300 text-sm">{error}</div>}
+        {resetPasswordTeacher && (
+          <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded text-sm">
+            <p className="font-medium text-blue-900 dark:text-blue-300">Resetting password for:</p>
+            <p className="text-blue-800 dark:text-blue-200">{resetPasswordTeacher.full_name} ({resetPasswordTeacher.email})</p>
+          </div>
+        )}
+        <div className="space-y-3">
+          <input type="password" placeholder="New Password (min 8 characters)" value={newPassword} onChange={e => setNewPassword(e.target.value)} className="w-full px-3 py-2 border border-theme rounded-lg text-sm" />
+        </div>
+        <div className="flex gap-3 mt-4">
+          <button onClick={() => { setShowResetPassword(false); setResetPasswordTeacher(null); setNewPassword(''); setError(''); }} className="flex-1 py-2 bg-theme-tertiary text-theme-secondary rounded-lg text-sm">Cancel</button>
+          <button onClick={handleResetPassword} className="flex-1 py-2 bg-amber-600 text-white rounded-lg text-sm">Reset Password</button>
+        </div>
+      </Modal>
     </DashboardLayout>
   );
 }

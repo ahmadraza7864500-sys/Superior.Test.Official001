@@ -1,7 +1,7 @@
 import React from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AppProvider, useApp } from './context';
-import { LoadingSpinner } from './components';
+import { LoadingSpinner, ErrorBoundary } from './components';
 import HomePage from './pages/HomePage';
 import StudentRegister from './pages/StudentRegister';
 import StudentLogin from './pages/StudentLogin';
@@ -44,10 +44,12 @@ function AppRoutes() {
 
 export default function App() {
   return (
-    <HashRouter>
-      <AppProvider>
-        <AppRoutes />
-      </AppProvider>
-    </HashRouter>
+    <ErrorBoundary>
+      <HashRouter>
+        <AppProvider>
+          <AppRoutes />
+        </AppProvider>
+      </HashRouter>
+    </ErrorBoundary>
   );
 }

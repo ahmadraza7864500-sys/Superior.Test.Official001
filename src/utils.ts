@@ -109,3 +109,46 @@ export function exportToCSV(data: any[], filename: string): void {
   a.href = url; a.download = `${filename}.csv`; a.click();
   URL.revokeObjectURL(url);
 }
+
+export async function exportToExcel(data: any[], filename: string): Promise<void> {
+  if (data.length === 0) return;
+  const XLSX = await import('xlsx');
+  const ws = XLSX.utils.json_to_sheet(data);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Data');
+  XLSX.writeFile(wb, `${filename}.xlsx`);
+}
+
+export async function exportToPDF(title: string, columns: string[], rows: any[][], filename: string): Promise<void> {
+  if (rows.length === 0) return;
+  const { jsPDF } = await import('jspdf');
+  const autoTable = (await import('jspdf-autotable')).default;
+  
+  const doc = new jsPDF();
+  
+  // Header
+  doc.setFontSize(18);
+  doc.setTextColor(79, 70, 229);
+  doc.text('Superior Test', 14, 20);
+  
+  doc.setFontSize(14);
+  doc.setTextColor(0, 0, 0);
+  doc.text(title, 14, 30);
+  
+  doc.setFontSize(9);
+  doc.setTextColor(100, 100, 100);
+  doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 37);
+  
+  // Table
+  autoTable(doc, {
+    head: [columns],
+    body: rows,
+    startY: 45,
+    styles: { fontSize: 8, cellPadding: 2 },
+    headStyles: { fillColor: [79, 70, 229], textColor: 255 },
+    alternateRowStyles: { fillColor: [245, 245, 255] },
+    margin: { top: 45 }
+  });
+  
+  doc.save(`${filename}.pdf`);
+}

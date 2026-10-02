@@ -602,3 +602,73 @@ export async function updateTestStatuses(): Promise<void> {
     }
   }
 }
+
+// ============ STUDENT EDITING (Principal/Teacher) ============
+export async function editStudent(studentId: string, data: any): Promise<void> {
+  const docRef = firestore.doc(collections.users, studentId);
+  await firestore.updateDoc(docRef, { ...data, updated_at: new Date().toISOString() });
+}
+
+// ============ PASSWORD RESET (Principal) ============
+export async function resetTeacherPassword(teacherId: string, newPassword: string): Promise<void> {
+  const passwordHash = await hashPassword(newPassword);
+  const docRef = firestore.doc(collections.users, teacherId);
+  await firestore.updateDoc(docRef, { password_hash: passwordHash, updated_at: new Date().toISOString() });
+}
+
+// ============ MANUAL TEST CLOSE (Teacher) ============
+export async function closeTest(testId: string): Promise<void> {
+  const docRef = firestore.doc(collections.tests, testId);
+  await firestore.updateDoc(docRef, { 
+    status: 'completed', 
+    end_time: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  });
+}
+
+// ============ LIVE TEST MONITORING (Teacher) ============
+export async function getLiveTestStatus(testId: string): Promise<{
+  started: number;
+  inProgress: number;
+  submitted: number;
+  notStarted: number;
+  students: any[];
+}> {
+  const test = await getTest(testId);
+  if (!test) return { started: 0, inProgress: 0, submitted: 0, notStarted: 0, students: [] };
+  
+  // Get all students in the class/section
+  const studentsQ = firestore.query(collections.users, 
+    firestore.where('role', '==', 'student'),
+    firestore.where('class_id', '==', test.class_id),
+    firestore.where('section_id', '==', test.section_id)
+  );
+  const studentsSnapshot = await studentsQ.get();
+  const students = studentsSnapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
+  
+  // Get all attempts for this test
+  const attemptsQ = firestore.query(collections.test_attempts, firestore.where('test_id', '==', testId));
+  const attemptsSnapshot = await attemptsQ.get();
+  const attempts = attemptsSnapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
+  
+  const started = attempts.filter((a: any) => a.status !== 'not_started').length;
+  const inProgress = attempts.filter((a: any) => a.status === 'in_progress').length;
+  const submitted = attempts.filter((a: any) => a.status === 'submitted' || a.status === 'auto_submitted').length;
+  const notStarted = students.length - started;
+  
+  // Build student status list
+  const studentStatus = students.map((student: any) => {
+    const attempt = attempts.find((a: any) => a.student_id === student.id);
+    return {
+      id: student.id,
+      name: student.full_name,
+      roll_number: student.roll_number,
+      status: attempt ? attempt.status : 'not_started',
+      started_at: attempt?.started_at || null,
+      submitted_at: attempt?.submitted_at || null,
+      percentage: attempt?.percentage || null
+    };
+  });
+  
+  return { started, inProgress, submitted, notStarted, students: studentStatus };
+}
