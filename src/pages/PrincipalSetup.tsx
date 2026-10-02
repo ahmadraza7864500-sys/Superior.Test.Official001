@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useApp } from '../context';
-import { queryOne } from '../database';
+import * as api from '../api';
 import { ThemeToggle, Logo, Card } from '../components';
 import { ArrowLeft, Shield } from 'lucide-react';
 
@@ -13,7 +13,7 @@ export default function PrincipalSetup() {
   const [exists, setExists] = useState(false);
   const [form, setForm] = useState({ full_name: '', email: '', username: '', password: '', confirmPassword: '' });
 
-  useEffect(() => { (async () => { const p = await queryOne('SELECT id FROM users WHERE role = ?', ['principal']); if (p) setExists(true); })(); }, []);
+  useEffect(() => { (async () => { const principals = await api.getUsersByRole('principal'); if (principals.length > 0) setExists(true); })(); }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault(); setLoading(true); setError('');

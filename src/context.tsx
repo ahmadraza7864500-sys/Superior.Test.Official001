@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import * as api from './api';
-import { getDB } from './database';
+import { initDatabase } from './database';
 
 interface User {
   id: number; email: string; role: string; full_name: string; phone: string | null;
@@ -38,19 +38,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     (async () => {
-      await getDB();
-      setDbReady(true);
-      const token = localStorage.getItem('st_token');
-      if (token) {
-        const u = await api.validateSession(token);
-        if (u && u.is_active) {
-          setUser(u as any);
-          setIsAuthenticated(true);
-        } else {
-          localStorage.removeItem('st_token');
+      try {
+        await initDatabase();
+        setDbReady(true);
+        const token = localStorage.getItem('st_token');
+        if (token) {
+          const u = await api.validateSession(token);
+          if (u && u.is_active) {
+            setUser(u as any);
+            setIsAuthenticated(true);
+          } else {
+            localStorage.removeItem('st_token');
+          }
         }
+      } catch (error) {
+        console.error('Initialization error:', error);
+      } finally {
+        setIsLoading(false);
       }
-      setIsLoading(false);
     })();
   }, []);
 

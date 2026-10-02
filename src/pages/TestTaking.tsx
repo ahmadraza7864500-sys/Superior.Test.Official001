@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useApp } from '../context';
 import * as api from '../api';
-import { querySQL } from '../database';
 import { Clock, Wifi, WifiOff, AlertTriangle, Maximize, Minimize } from 'lucide-react';
 
 export default function TestTaking() {

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useApp } from '../context';
 import { ThemeToggle, Logo } from '../components';
-import { queryOne } from '../database';
+import * as api from '../api';
 import { GraduationCap, BookOpen, Shield, Clock, BarChart3, Users, CheckCircle2, ArrowRight, Star, ChevronRight } from 'lucide-react';
 
 export default function HomePage() {
@@ -17,8 +17,8 @@ export default function HomePage() {
       else if (user.role === 'principal') navigate('/principal');
     }
     (async () => {
-      const p = await queryOne('SELECT id FROM users WHERE role = ?', ['principal']);
-      setHasPrincipal(!!p);
+      const principals = await api.getUsersByRole('principal');
+      setHasPrincipal(principals.length > 0);
     })();
   }, [isAuthenticated, user]);
 
