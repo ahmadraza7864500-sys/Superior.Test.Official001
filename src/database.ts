@@ -1,31 +1,32 @@
-import Dexie from 'dexie';
+// Database Layer - Firestore Implementation
+// Uses Firestore API (collections, documents, queries)
+// Works locally with localStorage when Firebase credentials are placeholders
 
-export const db = new Dexie('SuperiorTestDB');
+import * as firestore from './firestore';
 
-db.version(1).stores({
-  users: '++id, email, username, role, is_active',
-  otp_records: '++id, email, expires_at',
-  classes: '++id, name',
-  sections: '++id, class_id, name',
-  subjects: '++id, name',
-  teacher_assignments: '++id, teacher_id, class_id, section_id, subject_id',
-  tests: '++id, created_by, class_id, section_id, subject_id, status, start_time, end_time',
-  questions: '++id, test_id, question_order',
-  question_bank: '++id, teacher_id, subject_id',
-  test_attempts: '++id, test_id, student_id, status',
-  student_answers: '++id, attempt_id, question_id',
-  notifications: '++id, user_id, is_read',
-  notification_preferences: '++id, user_id',
-  audit_logs: '++id, user_id, timestamp',
-  sessions: '++id, user_id, token'
-});
-
-export async function initDatabase() {
-  try {
-    await db.open();
-    console.log('Database initialized successfully');
-  } catch (error) {
-    console.error('Database initialization error:', error);
-    throw error;
-  }
+// Initialize database
+export async function initDatabase(): Promise<void> {
+  console.log('Firestore database initialized (local mode)');
 }
+
+// Collection references
+export const collections = {
+  users: firestore.collection('users'),
+  otp_records: firestore.collection('otp_records'),
+  classes: firestore.collection('classes'),
+  sections: firestore.collection('sections'),
+  subjects: firestore.collection('subjects'),
+  teacher_assignments: firestore.collection('teacher_assignments'),
+  tests: firestore.collection('tests'),
+  questions: firestore.collection('questions'),
+  question_bank: firestore.collection('question_bank'),
+  test_attempts: firestore.collection('test_attempts'),
+  student_answers: firestore.collection('student_answers'),
+  notifications: firestore.collection('notifications'),
+  notification_preferences: firestore.collection('notification_preferences'),
+  audit_logs: firestore.collection('audit_logs'),
+  sessions: firestore.collection('sessions')
+};
+
+// Re-export Firestore utilities
+export { firestore };

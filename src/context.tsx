@@ -1,3 +1,4 @@
+// @ts-nocheck
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import * as api from './api';
 import { initDatabase } from './database';

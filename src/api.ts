@@ -1,5 +1,7 @@
-// @ts-nocheck
-import { db } from './database';
+// API Layer - Firestore Implementation
+// All database operations using Firestore API
+
+import { collections, firestore } from './database';
 import bcrypt from 'bcryptjs';
 
 // ============ AUTHENTICATION ============
@@ -25,9 +27,9 @@ export async function sendEmail(to: string, subject: string, body: string): Prom
 }
 
 // ============ USER MANAGEMENT ============
-export async function createUser(data: any): Promise<number> {
+export async function createUser(data: any): Promise<string> {
   const passwordHash = data.password ? await hashPassword(data.password) : null;
-  return await db.users.add({
+  const docRef = await firestore.addDoc(collections.users, {
     email: data.email,
     password_hash: passwordHash,
     role: data.role,
@@ -43,37 +45,48 @@ export async function createUser(data: any): Promise<number> {
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString()
   });
+  return docRef.id;
 }
 
 export async function getUserByEmail(email: string) {
-  return await db.users.where('email').equals(email).first();
+  const q = firestore.query(collections.users, firestore.where('email', '==', email));
+  const snapshot = await q.get();
+  return snapshot.docs[0]?.data() || null;
 }
 
 export async function getUserByUsername(username: string) {
-  return await db.users.where('username').equals(username).first();
+  const q = firestore.query(collections.users, firestore.where('username', '==', username));
+  const snapshot = await q.get();
+  return snapshot.docs[0]?.data() || null;
 }
 
-export async function getUserById(id: number) {
-  return await db.users.get(id);
+export async function getUserById(id: string) {
+  const docRef = firestore.doc(collections.users, id);
+  const docSnap = await firestore.getDoc(docRef);
+  return docSnap.exists() ? { ...docSnap.data(), id: docSnap.id } : null;
 }
 
 export async function getUsersByRole(role: string) {
-  return await db.users.where('role').equals(role).toArray();
+  const q = firestore.query(collections.users, firestore.where('role', '==', role));
+  const snapshot = await q.get();
+  return snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
 }
 
-export async function updateUser(id: number, data: any): Promise<void> {
-  await db.users.update(id, { ...data, updated_at: new Date().toISOString() });
+export async function updateUser(id: string, data: any): Promise<void> {
+  const docRef = firestore.doc(collections.users, id);
+  await firestore.updateDoc(docRef, { ...data, updated_at: new Date().toISOString() });
 }
 
-export async function deleteUser(id: number): Promise<void> {
-  await db.users.update(id, { is_active: 0, updated_at: new Date().toISOString() });
+export async function deleteUser(id: string): Promise<void> {
+  const docRef = firestore.doc(collections.users, id);
+  await firestore.updateDoc(docRef, { is_active: 0, updated_at: new Date().toISOString() });
 }
 
 // ============ OTP MANAGEMENT ============
 export async function createOTP(email: string): Promise<string> {
   const otp = generateOTP();
   const expires_at = Date.now() + 10 * 60 * 1000;
-  await db.otp_records.add({
+  await firestore.addDoc(collections.otp_records, {
     email,
     otp,
     expires_at,
@@ -86,44 +99,49 @@ export async function createOTP(email: string): Promise<string> {
 }
 
 export async function verifyOTPRecord(email: string, otp: string): Promise<{ success: boolean; message: string }> {
-  const record = await db.otp_records
-    .where('email').equals(email)
-    .filter(r => r.used === 0)
-    .reverse()
-    .sortBy('created_at');
+  const q = firestore.query(collections.otp_records, firestore.where('email', '==', email));
+  const snapshot = await q.get();
+  const records = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
   
-  if (record.length === 0) return { success: false, message: 'No OTP found. Please request a new one.' };
-  const latest = record[0];
+  // Find latest unused OTP
+  const unusedRecords = records.filter(r => r.used === 0);
+  if (unusedRecords.length === 0) return { success: false, message: 'No OTP found. Please request a new one.' };
+  
+  const latest = unusedRecords.sort((a, b) => 
+    new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+  )[0];
   
   if (latest.expires_at < Date.now()) return { success: false, message: 'OTP has expired. Please request a new one.' };
   if (latest.attempts >= 5) return { success: false, message: 'Too many incorrect attempts. Request a new OTP.' };
   if (latest.otp !== otp) {
-    await db.otp_records.update(latest.id!, { attempts: latest.attempts + 1 });
+    const docRef = firestore.doc(collections.otp_records, latest.id);
+    await firestore.updateDoc(docRef, { attempts: latest.attempts + 1 });
     return { success: false, message: `Invalid OTP. ${5 - latest.attempts - 1} attempts remaining.` };
   }
   
-  await db.otp_records.update(latest.id!, { used: 1 });
+  const docRef = firestore.doc(collections.otp_records, latest.id);
+  await firestore.updateDoc(docRef, { used: 1 });
   return { success: true, message: 'OTP verified.' };
 }
 
 export async function checkOTPRateLimit(email: string): Promise<{ allowed: boolean; waitSeconds?: number }> {
-  const last = await db.otp_records
-    .where('email').equals(email)
-    .reverse()
-    .sortBy('created_at');
+  const q = firestore.query(collections.otp_records, firestore.where('email', '==', email));
+  const snapshot = await q.get();
+  const records = snapshot.docs.map(doc => doc.data());
   
-  if (last.length > 0) {
-    const elapsed = Date.now() - new Date(last[0].created_at).getTime();
+  if (records.length > 0) {
+    const latest = records.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
+    const elapsed = Date.now() - new Date(latest.created_at).getTime();
     if (elapsed < 60000) return { allowed: false, waitSeconds: Math.ceil((60000 - elapsed) / 1000) };
   }
   return { allowed: true };
 }
 
 // ============ SESSION MANAGEMENT ============
-export async function createSession(userId: number): Promise<string> {
+export async function createSession(userId: string): Promise<string> {
   const token = generateToken();
   const expires_at = Date.now() + 24 * 60 * 60 * 1000;
-  await db.sessions.add({
+  await firestore.addDoc(collections.sessions, {
     user_id: userId,
     token,
     expires_at,
@@ -133,102 +151,141 @@ export async function createSession(userId: number): Promise<string> {
 }
 
 export async function validateSession(token: string) {
-  const session = await db.sessions.where('token').equals(token).first();
+  const q = firestore.query(collections.sessions, firestore.where('token', '==', token));
+  const snapshot = await q.get();
+  const session = snapshot.docs[0]?.data();
+  
   if (!session || session.expires_at < Date.now()) return null;
   return await getUserById(session.user_id);
 }
 
 export async function deleteSession(token: string): Promise<void> {
-  await db.sessions.where('token').equals(token).delete();
+  const q = firestore.query(collections.sessions, firestore.where('token', '==', token));
+  const snapshot = await q.get();
+  if (snapshot.docs[0]) {
+    const docRef = firestore.doc(collections.sessions, snapshot.docs[0].id);
+    await firestore.deleteDoc(docRef);
+  }
 }
 
 // ============ CLASSES & SECTIONS ============
 export async function getClasses() {
-  return await db.classes.toArray();
+  const snapshot = await firestore.getDocs(collections.classes);
+  return snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
 }
 
-export async function createClass(name: string, academic_year: string): Promise<number> {
-  return await db.classes.add({
+export async function createClass(name: string, academic_year: string): Promise<string> {
+  const docRef = await firestore.addDoc(collections.classes, {
     name,
     academic_year,
     created_at: new Date().toISOString()
   });
+  return docRef.id;
 }
 
-export async function deleteClass(id: number): Promise<void> {
-  await db.sections.where('class_id').equals(id).delete();
-  await db.classes.delete(id);
+export async function deleteClass(id: string): Promise<void> {
+  // Delete associated sections
+  const sectionsQ = firestore.query(collections.sections, firestore.where('class_id', '==', id));
+  const sectionsSnapshot = await sectionsQ.get();
+  for (const doc of sectionsSnapshot.docs) {
+    await firestore.deleteDoc(firestore.doc(collections.sections, doc.id));
+  }
+  // Delete class
+  const docRef = firestore.doc(collections.classes, id);
+  await firestore.deleteDoc(docRef);
 }
 
-export async function getSections(classId?: number) {
-  if (classId) return await db.sections.where('class_id').equals(classId).toArray();
-  return await db.sections.toArray();
+export async function getSections(classId?: string) {
+  if (classId) {
+    const q = firestore.query(collections.sections, firestore.where('class_id', '==', classId));
+    const snapshot = await q.get();
+    return snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
+  }
+  const snapshot = await firestore.getDocs(collections.sections);
+  return snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
 }
 
-export async function createSection(class_id: number, name: string): Promise<number> {
-  return await db.sections.add({
+export async function createSection(class_id: string, name: string): Promise<string> {
+  const docRef = await firestore.addDoc(collections.sections, {
     class_id,
     name,
     created_at: new Date().toISOString()
   });
+  return docRef.id;
 }
 
-export async function deleteSection(id: number): Promise<void> {
-  await db.sections.delete(id);
+export async function deleteSection(id: string): Promise<void> {
+  const docRef = firestore.doc(collections.sections, id);
+  await firestore.deleteDoc(docRef);
 }
 
 // ============ SUBJECTS ============
 export async function getSubjects() {
-  return await db.subjects.toArray();
+  const snapshot = await firestore.getDocs(collections.subjects);
+  return snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
 }
 
-export async function createSubject(name: string, category?: string): Promise<number> {
-  return await db.subjects.add({
+export async function createSubject(name: string, category?: string): Promise<string> {
+  const docRef = await firestore.addDoc(collections.subjects, {
     name,
     category: category || null,
     created_at: new Date().toISOString()
   });
+  return docRef.id;
 }
 
-export async function deleteSubject(id: number): Promise<void> {
-  await db.subjects.delete(id);
+export async function deleteSubject(id: string): Promise<void> {
+  const docRef = firestore.doc(collections.subjects, id);
+  await firestore.deleteDoc(docRef);
 }
 
 // ============ TEACHER ASSIGNMENTS ============
-export async function getTeacherAssignments(teacherId?: number) {
-  if (teacherId) return await db.teacher_assignments.where('teacher_id').equals(teacherId).toArray();
-  return await db.teacher_assignments.toArray();
+export async function getTeacherAssignments(teacherId?: string) {
+  if (teacherId) {
+    const q = firestore.query(collections.teacher_assignments, firestore.where('teacher_id', '==', teacherId));
+    const snapshot = await q.get();
+    return snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
+  }
+  const snapshot = await firestore.getDocs(collections.teacher_assignments);
+  return snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
 }
 
-export async function createAssignment(teacher_id: number, class_id: number, section_id: number, subject_id: number): Promise<number> {
-  return await db.teacher_assignments.add({
+export async function createAssignment(teacher_id: string, class_id: string, section_id: string, subject_id: string): Promise<string> {
+  const docRef = await firestore.addDoc(collections.teacher_assignments, {
     teacher_id,
     class_id,
     section_id,
     subject_id,
     created_at: new Date().toISOString()
   });
+  return docRef.id;
 }
 
-export async function deleteAssignment(id: number): Promise<void> {
-  await db.teacher_assignments.delete(id);
+export async function deleteAssignment(id: string): Promise<void> {
+  const docRef = firestore.doc(collections.teacher_assignments, id);
+  await firestore.deleteDoc(docRef);
 }
 
 // ============ TESTS ============
-export async function getTests(filters?: { createdBy?: number; classId?: number; status?: string }) {
-  let tests = await db.tests.toArray();
-  if (filters?.createdBy) tests = tests.filter(t => t.created_by === filters.createdBy);
-  if (filters?.classId) tests = tests.filter(t => t.class_id === filters.classId);
-  if (filters?.status) tests = tests.filter(t => t.status === filters.status);
-  return tests.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+export async function getTests(filters?: { createdBy?: string; classId?: string; status?: string }) {
+  const snapshot = await firestore.getDocs(collections.tests);
+  let tests = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
+  
+  if (filters?.createdBy) tests = tests.filter((t: any) => t.created_by === filters.createdBy);
+  if (filters?.classId) tests = tests.filter((t: any) => t.class_id === filters.classId);
+  if (filters?.status) tests = tests.filter((t: any) => t.status === filters.status);
+  
+  return tests.sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 }
 
-export async function getTest(id: number) {
-  return await db.tests.get(id);
+export async function getTest(id: string) {
+  const docRef = firestore.doc(collections.tests, id);
+  const docSnap = await firestore.getDoc(docRef);
+  return docSnap.exists() ? { ...docSnap.data(), id: docSnap.id } : null;
 }
 
-export async function createTest(data: any): Promise<number> {
-  return await db.tests.add({
+export async function createTest(data: any): Promise<string> {
+  const docRef = await firestore.addDoc(collections.tests, {
     title: data.title,
     subject_id: data.subject_id,
     class_id: data.class_id,
@@ -248,24 +305,35 @@ export async function createTest(data: any): Promise<number> {
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString()
   });
+  return docRef.id;
 }
 
-export async function updateTest(id: number, data: any): Promise<void> {
-  await db.tests.update(id, { ...data, updated_at: new Date().toISOString() });
+export async function updateTest(id: string, data: any): Promise<void> {
+  const docRef = firestore.doc(collections.tests, id);
+  await firestore.updateDoc(docRef, { ...data, updated_at: new Date().toISOString() });
 }
 
-export async function deleteTest(id: number): Promise<void> {
-  await db.questions.where('test_id').equals(id).delete();
-  await db.tests.delete(id);
+export async function deleteTest(id: string): Promise<void> {
+  // Delete associated questions
+  const questionsQ = firestore.query(collections.questions, firestore.where('test_id', '==', id));
+  const questionsSnapshot = await questionsQ.get();
+  for (const doc of questionsSnapshot.docs) {
+    await firestore.deleteDoc(firestore.doc(collections.questions, doc.id));
+  }
+  // Delete test
+  const docRef = firestore.doc(collections.tests, id);
+  await firestore.deleteDoc(docRef);
 }
 
 // ============ QUESTIONS ============
-export async function getQuestions(testId: number) {
-  return await db.questions.where('test_id').equals(testId).sortBy('question_order');
+export async function getQuestions(testId: string) {
+  const q = firestore.query(collections.questions, firestore.where('test_id', '==', testId));
+  const snapshot = await q.get();
+  return snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id })).sort((a: any, b: any) => a.question_order - b.question_order);
 }
 
-export async function addQuestion(testId: number, data: any, order: number): Promise<number> {
-  return await db.questions.add({
+export async function addQuestion(testId: string, data: any, order: number): Promise<string> {
+  const docRef = await firestore.addDoc(collections.questions, {
     test_id: testId,
     question_text: data.question_text,
     option_a: data.option_a,
@@ -275,22 +343,31 @@ export async function addQuestion(testId: number, data: any, order: number): Pro
     correct_answer: data.correct_answer,
     question_order: order
   });
+  return docRef.id;
 }
 
-export async function deleteQuestionsByTest(testId: number): Promise<void> {
-  await db.questions.where('test_id').equals(testId).delete();
+export async function deleteQuestionsByTest(testId: string): Promise<void> {
+  const q = firestore.query(collections.questions, firestore.where('test_id', '==', testId));
+  const snapshot = await q.get();
+  for (const doc of snapshot.docs) {
+    await firestore.deleteDoc(firestore.doc(collections.questions, doc.id));
+  }
 }
 
 // ============ QUESTION BANK ============
-export async function getQuestionBank(teacherId: number, filters?: { subjectId?: number; search?: string }) {
-  let questions = await db.question_bank.where('teacher_id').equals(teacherId).toArray();
-  if (filters?.subjectId) questions = questions.filter(q => q.subject_id === filters.subjectId);
-  if (filters?.search) questions = questions.filter(q => q.question_text.toLowerCase().includes(filters.search!.toLowerCase()));
-  return questions.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+export async function getQuestionBank(teacherId: string, filters?: { subjectId?: string; search?: string }) {
+  const q = firestore.query(collections.question_bank, firestore.where('teacher_id', '==', teacherId));
+  const snapshot = await q.get();
+  let questions = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
+  
+  if (filters?.subjectId) questions = questions.filter((q: any) => q.subject_id === filters.subjectId);
+  if (filters?.search) questions = questions.filter((q: any) => q.question_text.toLowerCase().includes(filters.search!.toLowerCase()));
+  
+  return questions.sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 }
 
-export async function addToQuestionBank(data: any): Promise<number> {
-  return await db.question_bank.add({
+export async function addToQuestionBank(data: any): Promise<string> {
+  const docRef = await firestore.addDoc(collections.question_bank, {
     teacher_id: data.teacher_id,
     subject_id: data.subject_id,
     class_id: data.class_id || null,
@@ -304,27 +381,34 @@ export async function addToQuestionBank(data: any): Promise<number> {
     correct_answer: data.correct_answer,
     created_at: new Date().toISOString()
   });
+  return docRef.id;
 }
 
-export async function deleteFromQuestionBank(id: number): Promise<void> {
-  await db.question_bank.delete(id);
+export async function deleteFromQuestionBank(id: string): Promise<void> {
+  const docRef = firestore.doc(collections.question_bank, id);
+  await firestore.deleteDoc(docRef);
 }
 
 // ============ TEST ATTEMPTS ============
-export async function getAttempts(filters?: { testId?: number; studentId?: number; status?: string }) {
-  let attempts = await db.test_attempts.toArray();
-  if (filters?.testId) attempts = attempts.filter(a => a.test_id === filters.testId);
-  if (filters?.studentId) attempts = attempts.filter(a => a.student_id === filters.studentId);
-  if (filters?.status) attempts = attempts.filter(a => a.status === filters.status);
-  return attempts.sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime());
+export async function getAttempts(filters?: { testId?: string; studentId?: string; status?: string }) {
+  const snapshot = await firestore.getDocs(collections.test_attempts);
+  let attempts = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
+  
+  if (filters?.testId) attempts = attempts.filter((a: any) => a.test_id === filters.testId);
+  if (filters?.studentId) attempts = attempts.filter((a: any) => a.student_id === filters.studentId);
+  if (filters?.status) attempts = attempts.filter((a: any) => a.status === filters.status);
+  
+  return attempts.sort((a: any, b: any) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime());
 }
 
-export async function getAttempt(id: number) {
-  return await db.test_attempts.get(id);
+export async function getAttempt(id: string) {
+  const docRef = firestore.doc(collections.test_attempts, id);
+  const docSnap = await firestore.getDoc(docRef);
+  return docSnap.exists() ? { ...docSnap.data(), id: docSnap.id } : null;
 }
 
-export async function createAttempt(data: any): Promise<number> {
-  return await db.test_attempts.add({
+export async function createAttempt(data: any): Promise<string> {
+  const docRef = await firestore.addDoc(collections.test_attempts, {
     test_id: data.test_id,
     student_id: data.student_id,
     attempt_number: data.attempt_number,
@@ -339,30 +423,36 @@ export async function createAttempt(data: any): Promise<number> {
     unanswered_count: 0,
     tab_switch_count: 0
   });
+  return docRef.id;
 }
 
-export async function updateAttempt(id: number, data: any): Promise<void> {
-  await db.test_attempts.update(id, data);
+export async function updateAttempt(id: string, data: any): Promise<void> {
+  const docRef = firestore.doc(collections.test_attempts, id);
+  await firestore.updateDoc(docRef, data);
 }
 
 // ============ STUDENT ANSWERS ============
-export async function getStudentAnswers(attemptId: number) {
-  return await db.student_answers.where('attempt_id').equals(attemptId).toArray();
+export async function getStudentAnswers(attemptId: string) {
+  const q = firestore.query(collections.student_answers, firestore.where('attempt_id', '==', attemptId));
+  const snapshot = await q.get();
+  return snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
 }
 
-export async function saveStudentAnswer(attemptId: number, questionId: number, answer: string): Promise<void> {
-  const existing = await db.student_answers
-    .where('attempt_id').equals(attemptId)
-    .and(a => a.question_id === questionId)
-    .first();
+export async function saveStudentAnswer(attemptId: string, questionId: string, answer: string): Promise<void> {
+  const q = firestore.query(collections.student_answers, 
+    firestore.where('attempt_id', '==', attemptId),
+    firestore.where('question_id', '==', questionId)
+  );
+  const snapshot = await q.get();
   
-  if (existing) {
-    await db.student_answers.update(existing.id!, {
+  if (snapshot.docs.length > 0) {
+    const docRef = firestore.doc(collections.student_answers, snapshot.docs[0].id);
+    await firestore.updateDoc(docRef, {
       selected_answer: answer,
       saved_at: new Date().toISOString()
     });
   } else {
-    await db.student_answers.add({
+    await firestore.addDoc(collections.student_answers, {
       attempt_id: attemptId,
       question_id: questionId,
       selected_answer: answer,
@@ -373,36 +463,39 @@ export async function saveStudentAnswer(attemptId: number, questionId: number, a
   }
 }
 
-export async function gradeAttempt(attemptId: number): Promise<void> {
-  const attempt = await db.test_attempts.get(attemptId);
+export async function gradeAttempt(attemptId: string): Promise<void> {
+  const attempt = await getAttempt(attemptId);
   if (!attempt) return;
-  const test = await db.tests.get(attempt.test_id);
+  const test = await getTest(attempt.test_id);
   if (!test) return;
   
-  const questions = await db.questions.where('test_id').equals(test.id!).toArray();
-  const answers = await db.student_answers.where('attempt_id').equals(attemptId).toArray();
+  const questions = await getQuestions(test.id!);
+  const answers = await getStudentAnswers(attemptId);
   
   let correct = 0, wrong = 0, unanswered = 0, obtained = 0;
   
   for (const q of questions) {
-    const ans = answers.find(a => a.question_id === q.id);
+    const ans = answers.find((a: any) => a.question_id === q.id);
     if (!ans || !ans.selected_answer) {
       unanswered++;
     } else if (ans.selected_answer === q.correct_answer) {
       correct++;
       obtained += test.marks_per_question;
-      await db.student_answers.update(ans.id!, { is_correct: 1, marks_obtained: test.marks_per_question });
+      const docRef = firestore.doc(collections.student_answers, ans.id);
+      await firestore.updateDoc(docRef, { is_correct: 1, marks_obtained: test.marks_per_question });
     } else {
       wrong++;
       obtained -= test.negative_marking;
-      await db.student_answers.update(ans.id!, { is_correct: 0, marks_obtained: -test.negative_marking });
+      const docRef = firestore.doc(collections.student_answers, ans.id);
+      await firestore.updateDoc(docRef, { is_correct: 0, marks_obtained: -test.negative_marking });
     }
   }
   
   const total = questions.length * test.marks_per_question;
   const percentage = total > 0 ? Math.max(0, Math.round((obtained / total) * 10000) / 100) : 0;
   
-  await db.test_attempts.update(attemptId, {
+  const docRef = firestore.doc(collections.test_attempts, attemptId);
+  await firestore.updateDoc(docRef, {
     status: 'submitted',
     submitted_at: new Date().toISOString(),
     total_marks: total,
@@ -415,13 +508,15 @@ export async function gradeAttempt(attemptId: number): Promise<void> {
 }
 
 // ============ NOTIFICATIONS ============
-export async function getNotifications(userId: number, limit = 50) {
-  const notifs = await db.notifications.where('user_id').equals(userId).reverse().sortBy('created_at');
-  return notifs.slice(0, limit);
+export async function getNotifications(userId: string, limit = 50) {
+  const q = firestore.query(collections.notifications, firestore.where('user_id', '==', userId));
+  const snapshot = await q.get();
+  const notifs = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
+  return notifs.sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).slice(0, limit);
 }
 
-export async function createNotification(userId: number, title: string, message: string, type: string): Promise<void> {
-  await db.notifications.add({
+export async function createNotification(userId: string, title: string, message: string, type: string): Promise<void> {
+  await firestore.addDoc(collections.notifications, {
     user_id: userId,
     title,
     message,
@@ -431,14 +526,17 @@ export async function createNotification(userId: number, title: string, message:
   });
 }
 
-export async function markNotificationRead(id: number): Promise<void> {
-  await db.notifications.update(id, { is_read: 1 });
+export async function markNotificationRead(id: string): Promise<void> {
+  const docRef = firestore.doc(collections.notifications, id);
+  await firestore.updateDoc(docRef, { is_read: 1 });
 }
 
-export async function getNotificationPrefs(userId: number) {
-  const prefs = await db.notification_preferences.where('user_id').equals(userId).first();
-  if (!prefs) {
-    const id = await db.notification_preferences.add({
+export async function getNotificationPrefs(userId: string) {
+  const q = firestore.query(collections.notification_preferences, firestore.where('user_id', '==', userId));
+  const snapshot = await q.get();
+  
+  if (snapshot.docs.length === 0) {
+    const docRef = await firestore.addDoc(collections.notification_preferences, {
       user_id: userId,
       email_test_assigned: 1,
       email_test_reminder: 1,
@@ -447,21 +545,26 @@ export async function getNotificationPrefs(userId: number) {
       inapp_test_reminder: 1,
       inapp_result_available: 1
     });
-    return await db.notification_preferences.get(id);
+    const docSnap = await firestore.getDoc(firestore.doc(collections.notification_preferences, docRef.id));
+    return { ...docSnap.data(), id: docSnap.id };
   }
-  return prefs;
+  
+  return { ...snapshot.docs[0].data(), id: snapshot.docs[0].id };
 }
 
-export async function updateNotificationPrefs(userId: number, data: any): Promise<void> {
-  const existing = await db.notification_preferences.where('user_id').equals(userId).first();
-  if (existing) {
-    await db.notification_preferences.update(existing.id!, data);
+export async function updateNotificationPrefs(userId: string, data: any): Promise<void> {
+  const q = firestore.query(collections.notification_preferences, firestore.where('user_id', '==', userId));
+  const snapshot = await q.get();
+  
+  if (snapshot.docs.length > 0) {
+    const docRef = firestore.doc(collections.notification_preferences, snapshot.docs[0].id);
+    await firestore.updateDoc(docRef, data);
   }
 }
 
 // ============ AUDIT LOGS ============
-export async function addAuditLog(userId: number, userName: string, role: string, action: string, details: string): Promise<void> {
-  await db.audit_logs.add({
+export async function addAuditLog(userId: string, userName: string, role: string, action: string, details: string): Promise<void> {
+  await firestore.addDoc(collections.audit_logs, {
     user_id: userId,
     user_name: userName,
     role,
@@ -471,26 +574,31 @@ export async function addAuditLog(userId: number, userName: string, role: string
   });
 }
 
-export async function getAuditLogs(filters?: { userId?: number; limit?: number }) {
-  let logs = await db.audit_logs.toArray();
-  if (filters?.userId) logs = logs.filter(l => l.user_id === filters.userId);
-  logs = logs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+export async function getAuditLogs(filters?: { userId?: string; limit?: number }) {
+  const snapshot = await firestore.getDocs(collections.audit_logs);
+  let logs = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
+  
+  if (filters?.userId) logs = logs.filter((l: any) => l.user_id === filters.userId);
+  logs = logs.sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
   return logs.slice(0, filters?.limit || 100);
 }
 
 // ============ UPDATE TEST STATUS ============
 export async function updateTestStatuses(): Promise<void> {
   const now = new Date();
-  const allTests = await db.tests.toArray();
+  const snapshot = await firestore.getDocs(collections.tests);
+  const allTests = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
   
   for (const test of allTests) {
     const startTime = new Date(test.start_time);
     const endTime = new Date(test.end_time);
     
     if (test.status === 'upcoming' && startTime <= now && endTime >= now) {
-      await db.tests.update(test.id!, { status: 'active', is_locked: 1 });
+      const docRef = firestore.doc(collections.tests, test.id);
+      await firestore.updateDoc(docRef, { status: 'active', is_locked: 1 });
     } else if ((test.status === 'upcoming' || test.status === 'active') && endTime < now) {
-      await db.tests.update(test.id!, { status: 'expired' });
+      const docRef = firestore.doc(collections.tests, test.id);
+      await firestore.updateDoc(docRef, { status: 'expired' });
     }
   }
 }
