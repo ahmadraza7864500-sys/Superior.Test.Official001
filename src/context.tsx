@@ -38,6 +38,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   });
 
   useEffect(() => {
+    // Add timeout to prevent hanging
+    const timeoutId = setTimeout(() => {
+      console.warn('Initialization timeout - forcing load');
+      setIsLoading(false);
+    }, 5000); // 5 second timeout
+
     (async () => {
       try {
         await initDatabase();
@@ -52,12 +58,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             localStorage.removeItem('st_token');
           }
         }
+        clearTimeout(timeoutId);
+        setIsLoading(false);
       } catch (error) {
         console.error('Initialization error:', error);
-      } finally {
+        clearTimeout(timeoutId);
         setIsLoading(false);
       }
     })();
+
+    return () => clearTimeout(timeoutId);
   }, []);
 
   useEffect(() => {

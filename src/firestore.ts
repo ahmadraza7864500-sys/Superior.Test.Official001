@@ -1,8 +1,9 @@
 // Firestore Service Layer
-// This provides a Firestore-compatible API that works locally
-// When you add real Firebase credentials, it will use cloud Firestore
+// This provides a Firestore-compatible API that works locally with localStorage
+// No Firebase dependency required - works immediately!
 
-import { isUsingPlaceholderCredentials } from './firebase.config';
+// Always use local mode for now
+const isUsingPlaceholderCredentials = true;
 
 // Local storage keys
 const STORAGE_PREFIX = 'firestore_';

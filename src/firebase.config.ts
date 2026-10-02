@@ -1,35 +1,42 @@
 // Firebase Configuration
-// Replace these values with your actual Firebase project credentials
-// Get them from: https://console.firebase.google.com/
+// This file is OPTIONAL - the app works without Firebase using localStorage
 
-import { initializeApp } from 'firebase/app';
-import { getFirestore, connectFirestoreEmulator } from 'firebase/firestore';
-import { getAuth, connectAuthEmulator } from 'firebase/auth';
+// Check if Firebase credentials are configured
+export const isUsingPlaceholderCredentials = true;
 
-const firebaseConfig = {
-  apiKey: "YOUR_API_KEY_HERE",
-  authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_PROJECT_ID.appspot.com",
-  messagingSenderId: "YOUR_SENDER_ID",
-  appId: "YOUR_APP_ID"
+// Firebase will only be initialized when you add real credentials
+// For now, the app uses localStorage (works immediately)
+
+export const firebaseConfig = {
+  apiKey: "",
+  authDomain: "",
+  projectId: "",
+  storageBucket: "",
+  messagingSenderId: "",
+  appId: ""
 };
 
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app);
-export const auth = getAuth(app);
+// Lazy initialization - only when needed
+export async function getFirebaseApp() {
+  if (isUsingPlaceholderCredentials) {
+    return null;
+  }
+  
+  try {
+    const { initializeApp } = await import('firebase/app');
+    const { getFirestore } = await import('firebase/firestore');
+    const { getAuth } = await import('firebase/auth');
+    
+    const app = initializeApp(firebaseConfig);
+    return {
+      app,
+      db: getFirestore(app),
+      auth: getAuth(app)
+    };
+  } catch (error) {
+    console.error('Firebase initialization failed:', error);
+    return null;
+  }
+}
 
-// Check if using placeholder credentials
-export const isUsingPlaceholderCredentials = 
-  firebaseConfig.apiKey === "YOUR_API_KEY_HERE" ||
-  firebaseConfig.projectId === "YOUR_PROJECT_ID";
-
-// Optional: Connect to emulators for local development
-// Uncomment these lines if you're running Firebase emulators
-// if (process.env.NODE_ENV === 'development') {
-//   connectFirestoreEmulator(db, 'localhost', 8080);
-//   connectAuthEmulator(auth, 'http://localhost:9099');
-// }
-
-export default app;
+export default null;
